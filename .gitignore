@@ -1,0 +1,32 @@
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pdb
+
+# --- Virtual environment ---
+.venv/
+venv/
+env/
+
+# --- macOS junk ---
+.DS_Store
+
+# --- Streamlit cache ---
+.streamlit/
+
+# --- VS Code ---
+.vscode/
+
+# --- Environment & credentials ---
+.env
+
+# --- Data files (optional if you don’t want to share personal logs) ---
+data/*.csv
+data/*.json
+!data/sample_*.csv   # keep only sample files if you create any for demo
+
+# --- Logs & temp files ---
+*.log
+tmp/
