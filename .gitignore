@@ -201,7 +201,36 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# Project specific
+# Old Streamlit app (replaced by React/FastAPI)
+app/
+
+# CSV data files (using Supabase now)
+data/
+
+# Old utility scripts
+repair_workouts_csv.py
+tools_fix_csvs.py
+
+# Frontend build artifacts
+frontend/dist/
+
+# Backend virtual environment (already covered but explicit)
+backend/venv/
+backend/__pycache__/
+src/__pycache__/
+
+# Root requirements.txt (use backend/requirements.txt)
+requirements.txt
+
+# Backend package-lock.json (shouldn't be here)
+backend/package-lock.json
+
+# macOS
+.DS_Store
+
 # Marimo
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+.env

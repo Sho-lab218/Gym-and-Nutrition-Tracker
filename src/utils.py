@@ -47,27 +47,38 @@ def meals_daily(df: pd.DataFrame) -> pd.DataFrame:
 
 def load_workouts(path: str) -> pd.DataFrame:
     if not os.path.exists(path):
-        return pd.DataFrame(columns=["date","exercise","sets","reps","weight_kg","muscle_group","notes"])
-    df = pd.read_csv(path)
-    if "date" in df.columns:
-        df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.normalize()
-    for c in ["sets","reps","weight_kg"]:
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
+        return pd.DataFrame(columns=["date","exercise","sets","reps","weight_kg","muscle_group","notes","volume","week","year"])
+    try:
+        df = pd.read_csv(path)
+        if df.empty:
+            return pd.DataFrame(columns=["date","exercise","sets","reps","weight_kg","muscle_group","notes","volume","week","year"])
+        
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.normalize()
+        for c in ["sets","reps","weight_kg"]:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
 
-    # total volume per row
-    if {"sets","reps","weight_kg"}.issubset(df.columns):
-        df["volume"] = df["sets"] * df["reps"] * df["weight_kg"]
-    else:
-        df["volume"] = 0.0
+        # total volume per row
+        if {"sets","reps","weight_kg"}.issubset(df.columns):
+            df["volume"] = df["sets"] * df["reps"] * df["weight_kg"]
+        else:
+            df["volume"] = 0.0
 
-    # week/year for grouping
-    if "date" in df.columns:
-        iso = df["date"].dt.isocalendar()
-        df["week"] = iso.week.astype(int)
-        df["year"] = iso.year.astype(int)
+        # week/year for grouping
+        df = df.dropna(subset=["date"])
+        if not df.empty and "date" in df.columns:
+            iso = df["date"].dt.isocalendar()
+            df["week"] = iso.week.astype(int)
+            df["year"] = iso.year.astype(int)
+        else:
+            df["week"] = 0
+            df["year"] = 0
 
-    return df.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+        return df.sort_values("date").reset_index(drop=True)
+    except Exception as e:
+        print(f"Error loading workouts: {e}")
+        return pd.DataFrame(columns=["date","exercise","sets","reps","weight_kg","muscle_group","notes","volume","week","year"])
 
 # ---------------------- bodyweight helpers ----------------------
 

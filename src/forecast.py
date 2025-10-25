@@ -3,6 +3,8 @@ import numpy as np
 import pandas as pd
 from typing import Literal, Tuple
 from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.pipeline import Pipeline
 
 # Optional Holt-Winters
 try:
@@ -13,39 +15,140 @@ except Exception:
 
 # ------------------ generic series forecast utilities -----------------------
 def _fit_linear(y: np.ndarray) -> Tuple[LinearRegression, float]:
+    """Fit linear regression with improved error handling."""
     X = np.arange(len(y)).reshape(-1, 1)
     model = LinearRegression().fit(X, y)
     preds = model.predict(X)
-    se = float(np.sqrt(np.mean((y - preds) ** 2))) if len(y) > 1 else 0.0
+    # Use RMSE for standard error
+    mse = np.mean((y - preds) ** 2)
+    se = float(np.sqrt(mse)) if len(y) > 1 else float(np.std(y)) if len(y) > 0 else 0.0
     return model, se
+
+def _fit_polynomial(y: np.ndarray, degree: int = 2) -> Tuple[Pipeline, float]:
+    """Fit polynomial regression for non-linear trends."""
+    if len(y) < degree + 2:
+        return _fit_linear(y)
+    
+    X = np.arange(len(y)).reshape(-1, 1)
+    poly_model = Pipeline([
+        ('poly', PolynomialFeatures(degree=degree)),
+        ('linear', LinearRegression())
+    ])
+    poly_model.fit(X, y)
+    preds = poly_model.predict(X)
+    mse = np.mean((y - preds) ** 2)
+    se = float(np.sqrt(mse)) if len(y) > 1 else float(np.std(y)) if len(y) > 0 else 0.0
+    return poly_model, se
 
 def _predict_linear(n_hist: int, steps: int, model: LinearRegression):
     Xf = np.arange(n_hist, n_hist + steps).reshape(-1, 1)
     return model.predict(Xf)
 
-def forecast_series(values: np.ndarray, steps: int, algo: Literal["auto","holt","linear"] = "auto"):
+def _predict_polynomial(n_hist: int, steps: int, model: Pipeline):
+    Xf = np.arange(n_hist, n_hist + steps).reshape(-1, 1)
+    return model.predict(Xf)
+
+def _smooth_data(values: np.ndarray, window: int = 3) -> np.ndarray:
+    """Apply moving average smoothing to reduce noise."""
+    if len(values) < window:
+        return values
+    smoothed = np.convolve(values, np.ones(window)/window, mode='same')
+    # Keep edges original to avoid edge effects
+    smoothed[0] = values[0]
+    smoothed[-1] = values[-1]
+    return smoothed
+
+def forecast_series(values: np.ndarray, steps: int, algo: Literal["auto","holt","linear","poly"] = "auto"):
     """
-    Simple univariate forecast; returns (future_preds, stderr).
-    - auto: prefer Holt-Winters if available and len>=6 else linear
+    Improved univariate forecast with multiple algorithms.
+    - auto: choose best method based on data characteristics
+    - holt: Holt-Winters exponential smoothing
+    - linear: linear regression
+    - poly: polynomial regression (degree 2)
+    Returns (future_preds, stderr).
     """
     values = np.asarray(values, dtype=float)
     if len(values) == 0:
         return np.array([]), 0.0
+    
+    # Remove outliers using IQR method for better accuracy
+    if len(values) > 4:
+        q1, q3 = np.percentile(values, [25, 75])
+        iqr = q3 - q1
+        if iqr > 0:  # Only filter if there's variation
+            lower_bound = q1 - 1.5 * iqr
+            upper_bound = q3 + 1.5 * iqr
+            filtered = values[(values >= lower_bound) & (values <= upper_bound)]
+            if len(filtered) > 0:
+                values = filtered
 
-    use_holt = _HAS_SM and (algo in ("auto", "holt")) and len(values) >= 6
-    if use_holt:
+    # Apply smoothing for noisy data
+    if len(values) >= 5:
+        values = _smooth_data(values, window=min(3, len(values) // 2))
+
+    # Auto mode: choose best algorithm
+    if algo == "auto":
+        if _HAS_SM and len(values) >= 6:
+            algo = "holt"
+        elif len(values) >= 4:
+            # Check if data is non-linear
+            X = np.arange(len(values))
+            linear_model = LinearRegression().fit(X.reshape(-1, 1), values)
+            linear_preds = linear_model.predict(X.reshape(-1, 1))
+            linear_mse = np.mean((values - linear_preds) ** 2)
+            
+            poly_model, _ = _fit_polynomial(values, degree=2)
+            poly_preds = poly_model.predict(X.reshape(-1, 1))
+            poly_mse = np.mean((values - poly_preds) ** 2)
+            
+            # Use polynomial if it's significantly better
+            if poly_mse < linear_mse * 0.8:
+                algo = "poly"
+            else:
+                algo = "linear"
+        else:
+            algo = "linear"
+
+    # Holt-Winters
+    if algo == "holt" and _HAS_SM and len(values) >= 6:
         try:
-            model = ExponentialSmoothing(values, trend="add", seasonal=None,
-                                         initialization_method="estimated").fit()
+            model = ExponentialSmoothing(
+                values, 
+                trend="add", 
+                seasonal=None,
+                initialization_method="estimated"
+            ).fit(optimized=True)
             preds_in = model.fittedvalues
-            se = float(np.sqrt(np.mean((values - preds_in) ** 2))) if len(values) > 1 else 0.0
+            se = float(np.sqrt(np.mean((values - preds_in) ** 2))) if len(values) > 1 else float(np.std(values)) if len(values) > 0 else 0.0
             preds_out = model.forecast(steps)
+            # Clip predictions to reasonable bounds
+            min_val, max_val = np.min(values), np.max(values)
+            range_val = max_val - min_val
+            preds_out = np.clip(preds_out, min_val - 0.5 * range_val, max_val + 0.5 * range_val)
             return np.asarray(preds_out), se
         except Exception:
             pass  # fall back to linear
 
+    # Polynomial regression
+    if algo == "poly" and len(values) >= 4:
+        try:
+            poly_model, se = _fit_polynomial(values, degree=min(2, len(values) - 2))
+            preds_out = _predict_polynomial(len(values), steps, poly_model)
+            # Clip to reasonable bounds
+            min_val, max_val = np.min(values), np.max(values)
+            range_val = max_val - min_val
+            preds_out = np.clip(preds_out, min_val - 0.5 * range_val, max_val + 0.5 * range_val)
+            return np.asarray(preds_out), se
+        except Exception:
+            pass  # fall back to linear
+
+    # Linear regression (fallback)
     lr, se = _fit_linear(values)
     preds_out = _predict_linear(len(values), steps, lr)
+    # Clip to reasonable bounds
+    min_val, max_val = np.min(values), np.max(values)
+    range_val = max_val - min_val
+    preds_out = np.clip(preds_out, min_val - 0.5 * range_val, max_val + 0.5 * range_val)
     return np.asarray(preds_out), se
 
 # ------------------ 1RM forecast (weekly) -----------------------------------
@@ -90,6 +193,7 @@ def forecast_weight_realistic(
     recent_weeks: int = 6,
     max_abs_rate_pct: float = 1.5
 ) -> pd.DataFrame:
+    """Improved weight forecasting with better trend detection and confidence intervals."""
     if bw_df.empty or "body_weight_lbs" not in bw_df.columns or "date" not in bw_df.columns:
         return pd.DataFrame(columns=["date","value","lower","upper","kind"])
 
@@ -97,13 +201,25 @@ def forecast_weight_realistic(
     if d.empty:
         return pd.DataFrame(columns=["date","value","lower","upper","kind"])
 
+    # Use more data points for better trend estimation
     t = (d["date"] - d["date"].iloc[0]).dt.days.to_numpy() / 7.0
     y = d["body_weight_lbs"].to_numpy(dtype=float)
     curr = float(y[-1])
 
+    # Use weighted regression giving more weight to recent data
     n = min(len(y), max(3, recent_weeks))
-    X = np.vstack([np.ones(n), t[-n:]]).T
-    beta = np.linalg.lstsq(X, y[-n:], rcond=None)[0]
+    recent_indices = np.arange(max(0, len(y) - n), len(y))
+    t_recent = t[recent_indices]
+    y_recent = y[recent_indices]
+    
+    # Exponential weights (more recent = higher weight)
+    weights = np.exp(np.linspace(-2, 0, len(y_recent)))
+    weights = weights / weights.sum()
+    
+    # Weighted least squares
+    X = np.vstack([np.ones(len(t_recent)), t_recent]).T
+    W = np.diag(weights)
+    beta = np.linalg.solve(X.T @ W @ X, X.T @ W @ y_recent)
     slope_est = float(beta[1])  # lbs/week
 
     if target_rate_pct is not None and abs(target_rate_pct) > 1e-9:
@@ -111,6 +227,7 @@ def forecast_weight_realistic(
     else:
         slope = slope_est
 
+    # Clamp to realistic rates
     max_abs_lbs_per_week = max_abs_rate_pct / 100.0 * curr
     slope = float(np.clip(slope, -max_abs_lbs_per_week, max_abs_lbs_per_week))
 
@@ -120,10 +237,16 @@ def forecast_weight_realistic(
     tf = np.arange(t_last + 1, t_last + horizon_weeks + 1)
     preds = curr + slope * (tf - t_last)
 
-    resid = y[-n:] - (beta[0] + beta[1] * t[-n:])
-    se = float(np.sqrt(np.mean(resid**2))) if len(resid) > 1 else 1.0
-    lower = preds - 1.96 * se
-    upper = preds + 1.96 * se
+    # Improved confidence intervals using weighted residuals
+    resid = y_recent - (beta[0] + beta[1] * t_recent)
+    weighted_resid = resid * np.sqrt(weights)
+    mse = np.mean(weighted_resid**2)
+    se = float(np.sqrt(mse)) if len(resid) > 1 else float(np.std(y)) if len(y) > 1 else 1.0
+    
+    # Expand CI for longer horizons (uncertainty increases with time)
+    horizon_multiplier = 1.0 + 0.1 * np.arange(1, horizon_weeks + 1)
+    lower = preds - 1.96 * se * horizon_multiplier
+    upper = preds + 1.96 * se * horizon_multiplier
 
     actual = pd.DataFrame({"date": d["date"], "value": y, "lower": y, "upper": y, "kind": "actual"})
     future = pd.DataFrame({"date": future_dates, "value": preds, "lower": lower, "upper": upper, "kind": "pred"})

@@ -1,7 +1,0 @@
-pandas
-matplotlib
-scikit-learn
-streamlit
-
-plotly>=5.23
-statsmodels>=0.14
