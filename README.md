@@ -5,14 +5,14 @@ Built to showcase both **engineering** and **UX thinking** — combining data an
 
 ---
 
-## ✨ Features
-- 🗂️ CSV-based logging (easy to start; upgradeable to SQLite)
-- 📊 Analytics via pandas: weekly volume, PR detection, and Epley 1RM formula
-- 🤖 ML forecast (Linear Regression) with projected future performance
-- 📈 Streamlit dashboard featuring KPI cards, interactive graphs, and forecast trends
-- 🧮 Integrated Nutrition & Progress tracking (calories, macros, weight trends)
-- 🧠 Modular structure for future scaling (e.g., API, database integration)
-- 📷 Clean dark UI built for clarity and presentation
+## Features
+- CSV-based logging (easy to start; upgradeable to SQLite)
+- Analytics via pandas: weekly volume, PR detection, and Epley 1RM formula
+- ML forecast (Linear Regression) with projected future performance
+- Streamlit dashboard featuring KPI cards, interactive graphs, and forecast trends
+- Integrated Nutrition & Progress tracking (calories, macros, weight trends)
+- Modular structure for future scaling (e.g., API, database integration)
+  
 
 ---
 
